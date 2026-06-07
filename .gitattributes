@@ -1,0 +1,10 @@
+# Normalise line endings — LF in the repo, across Windows and Debian hosts.
+* text=auto eol=lf
+
+# Rust sources and config
+*.rs   text eol=lf
+*.toml text eol=lf
+*.md   text eol=lf
+
+# Binaries / artifacts are never normalised
+*.exe binary
