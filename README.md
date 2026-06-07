@@ -12,9 +12,61 @@ lifetime of the command and offers no interactive stdin or true TTY.
 
 ## Status
 
-**Design stage.** The architecture and tool surface are specified in
+**Working implementation — not yet released.**
+All 6 tools are implemented in Rust; 15+ tests pass locally on Windows and Linux.
+The architecture is documented in
 [`docs/design/2026-06-07-voxcaster-design.md`](docs/design/2026-06-07-voxcaster-design.md).
-No implementation has begun.
+Not production-hardened; breaking changes may occur before a versioned release.
+
+## Install / Run
+
+### Build
+
+```sh
+cargo build --release
+# produces: target/release/voxcaster   (target/release/voxcaster.exe on Windows)
+```
+
+### Register with Claude Code
+
+```sh
+claude mcp add --transport stdio voxcaster -- /absolute/path/to/voxcaster
+# Windows:
+claude mcp add --transport stdio voxcaster -- C:\absolute\path\to\voxcaster.exe
+```
+
+### Command policy
+
+Set `VOXCASTER_POLICY=/path/to/voxcaster-policy.toml` (see
+[`voxcaster-policy.example.toml`](voxcaster-policy.example.toml)).
+Without it a permissive default applies and a warning is printed to stderr.
+
+### Channel exit-push (optional, research preview)
+
+Opt in per session with:
+
+```sh
+claude --dangerously-load-development-channels server:voxcaster
+```
+
+> **Note:** exit-push channel wiring is not yet implemented.
+> `pty_wait` is the guaranteed completion path for all sessions.
+
+### Windows note — ConPTY redistributable
+
+On Windows 10 LTSC/IoT (and other images where the inbox ConPTY is broken),
+place a modern `conpty.dll` and `OpenConsole.exe` **next to `voxcaster.exe`**.
+Obtain them from the
+[`Microsoft.Windows.Console.ConPTY`](https://www.nuget.org/packages/Microsoft.Windows.Console.ConPTY)
+NuGet redistributable — download the `.nupkg`, unzip it, and copy:
+
+```
+runtimes/win-x64/native/conpty.dll
+build/native/runtimes/x64/OpenConsole.exe
+```
+
+`portable-pty` auto-prefers a co-located `conpty.dll` over the inbox one.
+Automatic bundling is planned for a future release.
 
 ## At a glance
 

@@ -376,6 +376,32 @@ impl VoxServer {
     }
 }
 
+/// Render a [`serde_json::Value`] as concise human-readable text.
+///
+/// - Object → one `key: value` line per top-level field; nested objects/arrays
+///   are compacted to their JSON representation.
+/// - Array → each element rendered with `human()`, joined by newlines.
+/// - String → the string value (no surrounding quotes).
+/// - Number/Bool/Null → their display representation.
+fn human(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::Object(map) => map
+            .iter()
+            .map(|(k, val)| {
+                let rendered = match val {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                format!("{k}: {rendered}")
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        serde_json::Value::Array(arr) => arr.iter().map(human).collect::<Vec<_>>().join("\n"),
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
 /// Render a `serde_json::Value` envelope as a single JSON text content block.
 fn success_json(value: serde_json::Value) -> CallToolResult {
     let text = serde_json::to_string(&value).unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"));
@@ -463,5 +489,28 @@ mod tests {
     fn bad_glob_matches_nothing() {
         let lines = vec!["a".to_string()];
         assert!(filter_lines(lines, Some("[")).is_empty());
+    }
+
+    #[test]
+    fn human_renders_object_as_keyvalue() {
+        let s = human(&serde_json::json!({"id": "pty_x", "status": "running"}));
+        assert!(s.contains("id: pty_x"), "got: {s}");
+        assert!(s.contains("status: running"), "got: {s}");
+    }
+
+    #[test]
+    fn human_renders_string_without_quotes() {
+        let s = human(&serde_json::json!("hello"));
+        assert_eq!(s, "hello");
+    }
+
+    #[test]
+    fn human_renders_array_as_lines() {
+        let s = human(&serde_json::json!([
+            {"id": "a", "status": "running"},
+            {"id": "b", "status": "dead"}
+        ]));
+        assert!(s.contains("id: a"), "got: {s}");
+        assert!(s.contains("id: b"), "got: {s}");
     }
 }
