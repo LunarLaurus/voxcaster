@@ -50,12 +50,13 @@ impl PtySession {
 
         let mut cmd = CommandBuilder::new(&opts.command);
         cmd.args(&opts.args);
-        let workdir = opts.workdir.clone().unwrap_or_else(|| {
-            std::env::current_dir()
-                .unwrap()
+        let workdir = match opts.workdir.clone() {
+            Some(w) => w,
+            None => std::env::current_dir()
+                .map_err(|e| VoxError::Spawn(format!("cannot resolve working directory: {e}")))?
                 .to_string_lossy()
-                .into_owned()
-        });
+                .into_owned(),
+        };
         cmd.cwd(&workdir);
         for (k, v) in &opts.env {
             cmd.env(k, v);

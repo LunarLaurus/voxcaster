@@ -6,10 +6,6 @@
 //! are thin wrappers around inner methods (`*_inner`) that carry no rmcp types,
 //! so the core logic stays unit-testable without a transport.
 
-// The wire-facing tool surface is reached only through the rmcp transport, which
-// is wired in a later task; until then the binary does not reference it directly.
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -31,6 +27,7 @@ use crate::types::{SpawnOptions, VoxError};
 pub struct VoxServer {
     manager: PtyManager,
     policy: Arc<PolicyEngine>,
+    #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
 }
 
@@ -239,10 +236,11 @@ impl VoxServer {
         };
         match self.spawn_inner(opts) {
             Ok(id) => {
+                let v = json!({ "sessionId": id });
                 if json_out {
-                    success_json(json!({ "sessionId": id }))
+                    success_json(v)
                 } else {
-                    CallToolResult::success(vec![Content::text(id)])
+                    render_text(v)
                 }
             }
             Err(e) => err_result(e),
@@ -255,10 +253,11 @@ impl VoxServer {
         let json_out = is_json(&p.format);
         match self.write_inner(&p.id, &p.data) {
             Ok(()) => {
+                let v = json!({ "sessionId": p.id, "written": true });
                 if json_out {
-                    success_json(json!({ "sessionId": p.id, "written": true }))
+                    success_json(v)
                 } else {
-                    CallToolResult::success(vec![Content::text("ok")])
+                    render_text(v)
                 }
             }
             Err(e) => err_result(e),
@@ -303,23 +302,16 @@ impl VoxServer {
     async fn pty_wait(&self, Parameters(p): Parameters<WaitParams>) -> CallToolResult {
         let json_out = is_json(&p.format);
         match self.manager.wait(&p.id, p.timeout_seconds).await {
-            Ok(info) => {
-                if json_out {
-                    match serde_json::to_value(&info) {
-                        Ok(v) => success_json(v),
-                        Err(e) => CallToolResult::error(vec![Content::text(format!("{e}"))]),
+            Ok(info) => match serde_json::to_value(&info) {
+                Ok(v) => {
+                    if json_out {
+                        success_json(v)
+                    } else {
+                        render_text(v)
                     }
-                } else {
-                    let code = info
-                        .exit_code
-                        .map(|c| c.to_string())
-                        .unwrap_or_else(|| "unknown".into());
-                    CallToolResult::success(vec![Content::text(format!(
-                        "session {} {:?} (exit {})",
-                        info.id, info.status, code
-                    ))])
                 }
-            }
+                Err(e) => CallToolResult::error(vec![Content::text(format!("{e}"))]),
+            },
             Err(e) => err_result(e),
         }
     }
@@ -329,30 +321,15 @@ impl VoxServer {
     async fn pty_list(&self, Parameters(p): Parameters<ListParams>) -> CallToolResult {
         let json_out = is_json(&p.format);
         let sessions = self.list_inner();
-        if json_out {
-            match serde_json::to_value(&sessions) {
-                Ok(v) => success_json(json!({ "sessions": v })),
-                Err(e) => CallToolResult::error(vec![Content::text(format!("{e}"))]),
+        match serde_json::to_value(&sessions) {
+            Ok(v) => {
+                if json_out {
+                    success_json(json!({ "sessions": v }))
+                } else {
+                    render_text(v)
+                }
             }
-        } else {
-            let text = if sessions.is_empty() {
-                "no sessions".to_string()
-            } else {
-                sessions
-                    .iter()
-                    .map(|s| {
-                        format!(
-                            "{}\t{:?}\t{} {}",
-                            s.id,
-                            s.status,
-                            s.command,
-                            s.args.join(" ")
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            };
-            CallToolResult::success(vec![Content::text(text)])
+            Err(e) => CallToolResult::error(vec![Content::text(format!("{e}"))]),
         }
     }
 
@@ -365,10 +342,11 @@ impl VoxServer {
         let json_out = is_json(&p.format);
         match self.kill_inner(&p.id, p.cleanup) {
             Ok(()) => {
+                let v = json!({ "sessionId": p.id, "killed": true, "cleanup": p.cleanup });
                 if json_out {
-                    success_json(json!({ "sessionId": p.id, "killed": true, "cleanup": p.cleanup }))
+                    success_json(v)
                 } else {
-                    CallToolResult::success(vec![Content::text("killed")])
+                    render_text(v)
                 }
             }
             Err(e) => err_result(e),
@@ -406,6 +384,11 @@ fn human(v: &serde_json::Value) -> String {
 fn success_json(value: serde_json::Value) -> CallToolResult {
     let text = serde_json::to_string(&value).unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"));
     CallToolResult::success(vec![Content::text(text)])
+}
+
+/// Render a `serde_json::Value` as concise human-readable text via [`human`].
+fn render_text(value: serde_json::Value) -> CallToolResult {
+    CallToolResult::success(vec![Content::text(human(&value))])
 }
 
 /// Render a [`VoxError`] as an error tool result carrying its display string.
