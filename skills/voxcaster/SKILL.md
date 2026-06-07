@@ -1,18 +1,22 @@
 ---
 name: voxcaster
 description: >-
-  Run and manage long-running, background, or interactive processes through the
+  Run and manage long-running, background, or interactive processes via the
   Voxcaster MCP tools (pty_spawn / pty_write / pty_read / pty_wait / pty_list /
-  pty_kill) instead of the blocking Bash tool. Use this skill whenever you start
-  a dev server, build/test watcher, REPL, database or SSH shell, log tailer, or
-  ANY command that should keep running while you do other work, needs interactive
-  stdin, requires a real TTY, or whose completion you want to be notified about.
-  Strongly prefer Voxcaster over `bash`/Bash for anything that would otherwise
-  block, hang, time out, or that you'd be tempted to background with `&` or poll
-  in a sleep loop. Triggers include "start the dev server", "run X in the
-  background", "watch the tests", "tail the logs", "keep it running", "send
-  input to the process", "it's still running", "restart the watcher", or noticing
-  a command didn't return because it stays alive.
+  pty_kill) instead of the blocking Bash tool. Use this skill for any command
+  that doesn't just run once and return — anything that stays alive, runs in the
+  background, waits for typed input, or should notify when it finishes. Trigger
+  it when the user wants to: start a dev server (vite, npm run dev, flask, cargo
+  run) and keep working; run a file-watcher that reruns on save (cargo watch,
+  jest --watch, tsc -w, nodemon); kick off a slow build or test suite and be
+  pinged the moment it exits while doing other work; tail or monitor logs in the
+  background and flag matching lines; or drive an interactive session that
+  prompts for input (ssh, psql, REPLs, sudo password). Also reach for it when a
+  command "froze the terminal" because it never exits, or the user says "keep it
+  running", "in the background", "let me know when it's done", "watch the tests",
+  "tail the logs", or "it'll ask me for a password". Skip it only for quick
+  one-shot commands that return immediately (ls, git status, a single lint or
+  build run).
 ---
 
 # Voxcaster — persistent interactive PTY sessions
