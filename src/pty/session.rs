@@ -27,6 +27,11 @@ pub struct PtySession {
     shared: Arc<Shared>,
     writer: Mutex<Box<dyn std::io::Write + Send>>,
     killer: Mutex<Box<dyn portable_pty::ChildKiller + Send + Sync>>,
+    // Keep the PTY pair (master + slave) alive for the child's lifetime.
+    // Dropping it tears down the ConPTY, and on Windows the child then fails DLL
+    // init with STATUS_DLL_INIT_FAILED (0xC0000142). See wezterm/wezterm#4674.
+    // Reader EOF instead arrives when this PtySession is dropped (pair closes).
+    _pair: Mutex<portable_pty::PtyPair>,
     exit_rx: watch::Receiver<bool>,
 }
 
@@ -73,13 +78,9 @@ impl PtySession {
             .try_clone_reader()
             .map_err(|e| VoxError::Spawn(e.to_string()))?;
 
-        // Drop the slave end so that when the child exits the master reader
-        // receives EOF. Without this the reader blocks forever on Windows.
-        drop(pair.slave);
-        // pair.master is kept alive implicitly — reader/writer hold the OS
-        // handle. We do NOT need to keep pair.master; it was consumed above.
-        // (The master handle is kept alive via the reader/writer Box internals.)
-        drop(pair.master);
+        // NB: do NOT drop `pair` here. The master/slave must stay alive for the
+        // child's whole lifetime or the ConPTY tears down and the child fails to
+        // start (0xC0000142 on Windows). `pair` is moved into the struct below.
 
         let shared = Arc::new(Shared {
             buffer: Mutex::new(RingBuffer::new(DEFAULT_MAX_LINES, DEFAULT_MAX_BYTES)),
@@ -136,6 +137,7 @@ impl PtySession {
             shared,
             writer: Mutex::new(writer),
             killer: Mutex::new(killer),
+            _pair: Mutex::new(pair),
             exit_rx,
         })
     }
@@ -222,14 +224,10 @@ mod tests {
     use crate::types::{SpawnOptions, Status};
 
     fn echo_opts(line: &str) -> SpawnOptions {
-        // cmd.exe exits with STATUS_NOT_IMPLEMENTED (0xC000_0002) when launched
-        // inside a ConPTY created with PSEUDOCONSOLE_WIN32_INPUT_MODE, which is
-        // the flag portable-pty 0.9.0 sets on Windows.  PowerShell handles the
-        // mode correctly and exits 0.
         #[cfg(windows)]
         let (command, args) = (
-            "powershell".to_string(),
-            vec!["-Command".into(), format!("Write-Output '{line}'")],
+            "cmd".to_string(),
+            vec!["/C".into(), format!("echo {line}")],
         );
         #[cfg(not(windows))]
         let (command, args) = ("/bin/echo".to_string(), vec![line.to_string()]);
@@ -244,48 +242,8 @@ mod tests {
         }
     }
 
-    /// Returns `true` if this process has or can obtain a Windows console.
-    /// ConPTY requires a console subsystem context; skip the test if unavailable.
-    #[cfg(windows)]
-    fn try_alloc_console() -> bool {
-        // Use raw FFI via the standard library's os module — winapi is a transitive
-        // dep only; declare the symbols ourselves to avoid adding a direct dependency.
-        #[link(name = "kernel32")]
-        extern "system" {
-            fn AllocConsole() -> i32;
-            fn FreeConsole() -> i32;
-        }
-        let allocated = unsafe { AllocConsole() != 0 };
-        if !allocated {
-            // Could not allocate — either already have one or access denied.
-            // Check if we genuinely have a console by querying the window.
-            #[link(name = "user32")]
-            extern "system" {
-                fn GetConsoleWindow() -> *mut std::ffi::c_void;
-            }
-            return !unsafe { GetConsoleWindow() }.is_null();
-        }
-        // Successfully allocated — free it immediately so the ConPTY can have the
-        // console context it needs when CreatePseudoConsole runs.
-        unsafe { FreeConsole() };
-        true
-    }
-
     #[tokio::test]
     async fn spawns_captures_output_and_exits_zero() {
-        // ConPTY on Windows requires the calling process to have a console.
-        // In headless CI / sandbox environments (GetConsoleWindow = null AND
-        // AllocConsole = ERROR_ACCESS_DENIED), all ConPTY children exit with
-        // STATUS_DLL_INIT_FAILED (0xC000_0142).  Detect this early and skip.
-        #[cfg(windows)]
-        if !try_alloc_console() {
-            eprintln!(
-                "SKIP spawns_captures_output_and_exits_zero: \
-                 no console subsystem available — ConPTY cannot operate in this environment"
-            );
-            return;
-        }
-
         let s = PtySession::spawn("pty_test", echo_opts("hello")).unwrap();
         let code = s.wait(Some(10)).await.unwrap();
         assert_eq!(code, Some(0));
