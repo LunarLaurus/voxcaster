@@ -1,0 +1,4 @@
+# Voxcaster command policy. Deny rules always win.
+allow_by_default = true
+allow = ["npm *", "cargo *", "git *", "go *", "python *", "node *"]
+deny  = ["rm -rf /*", "* | sh", "curl * | *", "* > /dev/sd*"]

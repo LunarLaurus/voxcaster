@@ -1,0 +1,33 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: fmt check
+        run: cargo fmt --all -- --check
+      - name: clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Build test binaries
+        run: cargo build --tests
+      - name: Fetch ConPTY redistributable (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ver = "1.24.260512001"
+          $url = "https://api.nuget.org/v3-flatcontainer/microsoft.windows.console.conpty/$ver/microsoft.windows.console.conpty.$ver.nupkg"
+          Invoke-WebRequest -Uri $url -OutFile conpty.zip
+          Expand-Archive conpty.zip -DestinationPath conpty -Force
+          New-Item -ItemType Directory -Force -Path target/debug/deps | Out-Null
+          Copy-Item conpty/runtimes/win-x64/native/conpty.dll target/debug/deps/conpty.dll -Force
+          Copy-Item conpty/build/native/runtimes/x64/OpenConsole.exe target/debug/deps/OpenConsole.exe -Force
+      - name: test
+        run: cargo test --all -- --color never

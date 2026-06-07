@@ -13,3 +13,8 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# Windows ConPTY redistributable — ignore loose copies at repo root only;
+# assets/win-x64/* is committed and must not be blocked by these rules.
+/conpty.dll
+/OpenConsole.exe
