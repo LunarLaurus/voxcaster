@@ -225,10 +225,7 @@ mod tests {
 
     fn echo_opts(line: &str) -> SpawnOptions {
         #[cfg(windows)]
-        let (command, args) = (
-            "cmd".to_string(),
-            vec!["/C".into(), format!("echo {line}")],
-        );
+        let (command, args) = ("cmd".to_string(), vec!["/C".into(), format!("echo {line}")]);
         #[cfg(not(windows))]
         let (command, args) = ("/bin/echo".to_string(), vec![line.to_string()]);
         SpawnOptions {
