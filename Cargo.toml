@@ -24,3 +24,9 @@ anyhow = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "test-util"] }
+
+[patch.crates-io]
+# portable-pty 0.9.0 sets PSEUDOCONSOLE_WIN32_INPUT_MODE which is not supported
+# on Windows 10 (build < 22000) and causes all ConPTY children to exit with
+# STATUS_NOT_IMPLEMENTED (0xC000_0002).  The local patch removes that flag.
+portable-pty = { path = "vendor/portable-pty" }
