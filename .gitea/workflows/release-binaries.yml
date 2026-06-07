@@ -1,0 +1,129 @@
+name: release-binaries
+
+# Cross-platform binary build for Voxcaster, complementing the canonical
+# lex-flows version-bump.yml (which builds only linux-amd64 on PR merge).
+#
+# Pattern mirrors StellarFleetOps/read-once: the single host-mode `fleet-ci`
+# runner is NOT Docker-capable, so the toolchain is provisioned into $HOME
+# without sudo — rustup (stable + cross targets), zig (via the `ziglang` pip
+# package) and cargo-zigbuild, which uses zig as the cross C compiler/linker.
+#
+# Targets: static musl Linux (x86_64, aarch64) + Windows (x86_64, via mingw).
+# The Windows .exe is CROSS-COMPILED (x86_64-pc-windows-gnu) and UNVERIFIED at
+# runtime — its ConPTY behaviour is only validated by a native Windows build.
+# Builds that fail (e.g. a missing target) are skipped, not fatal.
+#
+# Trigger: a `v*` tag (created by version-bump on PR merge) -> build all targets
+# and attach them to that tag's release. Also manual via workflow_dispatch.
+#
+# Auth: uses the fleet Bosun token (FLEET_TOKEN), matching the canonical
+# version-bump.yml so the whole pipeline runs under one identity.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cross-build:
+    runs-on: fleet-ci
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Provision toolchain (host, no sudo)
+        shell: bash
+        run: |
+          set -eu
+          [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env" || true
+          if ! command -v cargo >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y --profile minimal --default-toolchain stable
+          fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup target add \
+            x86_64-unknown-linux-musl \
+            aarch64-unknown-linux-musl \
+            x86_64-pc-windows-gnu
+          python3 -m pip install --user --break-system-packages --quiet ziglang \
+            || python3 -m pip install --user --quiet ziglang
+          if ! command -v cargo-zigbuild >/dev/null 2>&1; then
+            cargo install --locked cargo-zigbuild
+          fi
+          cargo-zigbuild --version
+
+      - name: Cross-build all targets
+        shell: bash
+        run: |
+          set -u
+          export PATH="$HOME/.cargo/bin:$PATH"
+          mkdir -p dist
+          # triple : output-name
+          TARGETS="
+            x86_64-unknown-linux-musl:voxcaster-linux-x86_64
+            aarch64-unknown-linux-musl:voxcaster-linux-aarch64
+            x86_64-pc-windows-gnu:voxcaster-windows-x86_64.exe
+          "
+          build_one() {
+            triple="${1%%:*}"; out="${1##*:}"
+            echo "::group::build ${triple}"
+            if cargo zigbuild --release --target "$triple"; then
+              if [ -f "target/${triple}/release/voxcaster.exe" ]; then
+                cp "target/${triple}/release/voxcaster.exe" "dist/${out}"
+              else
+                cp "target/${triple}/release/voxcaster" "dist/${out}"
+              fi
+              echo "built ${out}"
+            else
+              echo "SKIP ${triple} (build failed -- e.g. missing target or unsupported FFI)"
+            fi
+            echo "::endgroup::"
+          }
+          for t in $TARGETS; do build_one "$t"; done
+          chmod +x dist/* || true
+          echo "=== dist ==="; ls -la dist
+          if [ -z "$(ls -A dist 2>/dev/null)" ]; then
+            echo "no binaries built" >&2; exit 1
+          fi
+
+      - name: Attach binaries to the release (tags only)
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.FLEET_TOKEN }}
+        run: |
+          set -eu
+          api="${GITHUB_SERVER_URL}/api/v1/repos/${GITHUB_REPOSITORY}"
+          tag="${GITHUB_REF_NAME}"
+          auth="Authorization: token ${TOKEN}"
+
+          # The canonical version-bump workflow may already have created the
+          # release for this tag; reuse it. Otherwise create it (get-or-create).
+          rid="$(curl -fsSL -H "$auth" "$api/releases/tags/${tag}" 2>/dev/null \
+            | grep -oE '"id":[0-9]+' | head -1 | cut -d: -f2 || true)"
+          if [ -z "${rid}" ]; then
+            rid="$(curl -fsSL -X POST "$api/releases" -H "$auth" \
+              -H 'Content-Type: application/json' \
+              -d "{\"tag_name\":\"${tag}\",\"name\":\"voxcaster ${tag}\",\"body\":\"Automated cross-platform release.\",\"draft\":false,\"prerelease\":false}" \
+              | grep -oE '"id":[0-9]+' | head -1 | cut -d: -f2)"
+          fi
+          echo "release id: ${rid}"
+
+          for f in dist/*; do
+            name="$(basename "$f")"
+            # Replace an existing same-named asset so re-runs are idempotent.
+            existing="$(curl -fsSL -H "$auth" "$api/releases/${rid}/assets" 2>/dev/null \
+              | grep -oE "\"id\":[0-9]+,\"name\":\"${name}\"" | grep -oE '^"id":[0-9]+' | cut -d: -f2 || true)"
+            if [ -n "${existing}" ]; then
+              curl -fsSL -X DELETE "$api/releases/${rid}/assets/${existing}" -H "$auth" >/dev/null || true
+            fi
+            echo "uploading ${name}"
+            curl -fsSL -X POST "$api/releases/${rid}/assets?name=${name}" \
+              -H "$auth" -F "attachment=@${f}" >/dev/null
+          done
+          echo "attached $(ls dist | wc -l) binaries to ${tag}"

@@ -1,0 +1,91 @@
+name: Go Lint
+
+on:
+  push:
+    branches: ["master", "main"]
+    paths:
+      - "**.go"
+      - "go.mod"
+      - ".golangci.yml"
+  pull_request:
+    types: [opened, synchronize, reopened]
+    # No `branches:` filter — fire CI on any base, including stacked PRs
+    # targeting a feature branch. Task 1301 fix. The push-side `branches:`
+    # filter above stays: post-merge runs still gate on master/main only.
+    paths:
+      - "**.go"
+      - "go.mod"
+      - ".golangci.yml"
+
+env:
+  GOPRIVATE: "lex.lorben.uk/*,github.com/meridian-lex/*"
+  GONOSUMDB: "lex.lorben.uk/*,github.com/meridian-lex/*"
+  GOINSECURE: "lex.lorben.uk"
+  GOPROXY: "direct"
+  GIT_TERMINAL_PROMPT: "0"
+
+jobs:
+  lint:
+    name: Go Lint
+    runs-on: fleet-ci
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check for Go project
+        id: check
+        run: |
+          set -euxo pipefail
+          if [ ! -f go.mod ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "No go.mod found -- skipping"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-go@v6
+        if: steps.check.outputs.skip != 'true'
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Configure fleet module access
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          set -euxo pipefail
+          echo "machine 192.168.0.12 login Bosun password ${{ secrets.FLEET_TOKEN }}" >> ~/.netrc
+          chmod 600 ~/.netrc
+          git config --global --add url."http://Bosun:${{ secrets.FLEET_TOKEN }}@192.168.0.12:30008/StellarFleetOps/".insteadOf "https://github.com/meridian-lex/"
+          git config --global --add url."http://Bosun:${{ secrets.FLEET_TOKEN }}@192.168.0.12:30008/StellarFleetOps/".insteadOf "http://lex.lorben.uk/StellarFleetOps/"
+          git config --global --add url."http://Bosun:${{ secrets.FLEET_TOKEN }}@192.168.0.12:30008/StellarFleetOps/".insteadOf "https://lex.lorben.uk/StellarFleetOps/"
+          go env -w GONOSUMDB="lex.lorben.uk/*,github.com/meridian-lex/*" GOPRIVATE="lex.lorben.uk/*,github.com/meridian-lex/*" GOINSECURE="lex.lorben.uk" GOFLAGS=""
+          if command -v lex-go-proxy >/dev/null 2>&1; then lex-go-proxy --addr :80 --insecure=false --log=false & lex-go-proxy --addr :443 --log=false & sleep 0.3; fi
+
+      - name: Install golangci-lint
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          set -euxo pipefail
+          LINT_VERSION="v2.11.4"
+          NEED_INSTALL=true
+          if command -v golangci-lint >/dev/null 2>&1; then
+            CURRENT=$(golangci-lint --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1 | cut -d. -f1)
+            if [ "$CURRENT" = "2" ]; then
+              echo "golangci-lint v2 already installed"
+              golangci-lint --version
+              NEED_INSTALL=false
+            else
+              echo "golangci-lint v${CURRENT} found, upgrading to v2"
+            fi
+          fi
+          if [ "$NEED_INSTALL" = "true" ]; then
+            curl -fsSL "https://github.com/golangci/golangci-lint/releases/download/${LINT_VERSION}/golangci-lint-${LINT_VERSION#v}-linux-amd64.tar.gz" -o /tmp/golangci-lint.tar.gz
+            tar -xzf /tmp/golangci-lint.tar.gz -C /tmp
+            mv "/tmp/golangci-lint-${LINT_VERSION#v}-linux-amd64/golangci-lint" "$(go env GOPATH)/bin/"
+            golangci-lint --version
+          fi
+
+      - name: Lint
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          set -euxo pipefail
+          golangci-lint run --timeout 5m ./...

@@ -1,0 +1,88 @@
+name: Version Drift Check
+
+# Asserts that the in-tree VERSION file is aligned with the latest
+# semver `v*` git tag. Catches drift that happens when:
+#   * A tag is created manually (release UI, `git tag`, etc.) without
+#     bumping VERSION
+#   * Someone hand-edits VERSION without tagging
+#   * A version-bump.yml run fails partway (tag pushed, VERSION commit
+#     bounced by branch protection)
+#
+# Runs on every push to master and on every PR. Non-blocking on PRs
+# (the version-bump.yml workflow handles bumps on merge), but blocking
+# on master so a drifted state surfaces immediately.
+#
+# Synced from lex-flows. Do not edit per-repo — change the template.
+
+on:
+  push:
+    branches: ["master", "main"]
+    paths:
+      - "VERSION"
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: ["master", "main"]
+    paths:
+      - "VERSION"
+
+jobs:
+  drift-check:
+    name: VERSION vs latest tag
+    runs-on: fleet-ci
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check VERSION matches latest tag
+        run: |
+          set -euo pipefail
+
+          if [ ! -f VERSION ]; then
+            echo "::warning::No VERSION file in repo — skipping drift check"
+            exit 0
+          fi
+
+          VERSION_FILE=$(cat VERSION | tr -d '[:space:]')
+          if [ -z "$VERSION_FILE" ]; then
+            echo "::error::VERSION file is empty"
+            exit 1
+          fi
+
+          LATEST_TAG=$(git tag -l 'v*' \
+            | sed 's/^v//' \
+            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' \
+            | sort -t. -k1,1n -k2,2n -k3,3n \
+            | tail -1 || true)
+
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No semver v* tags in repo yet — VERSION file is the source of truth (=$VERSION_FILE)"
+            exit 0
+          fi
+
+          echo "VERSION file:   $VERSION_FILE"
+          echo "Latest v* tag:  v$LATEST_TAG"
+
+          if [ "$VERSION_FILE" = "$LATEST_TAG" ]; then
+            echo "OK: VERSION aligned with latest tag"
+            exit 0
+          fi
+
+          # Compare numerically so VERSION>tag is treated as "mid-bump, OK"
+          # while VERSION<tag is "drifted, fail".
+          HIGHER=$(printf '%s\n%s\n' "$VERSION_FILE" "$LATEST_TAG" \
+            | sort -t. -k1,1n -k2,2n -k3,3n \
+            | tail -1)
+
+          if [ "$HIGHER" = "$VERSION_FILE" ]; then
+            echo "OK: VERSION ($VERSION_FILE) is ahead of latest tag (v$LATEST_TAG) — assumed mid-bump"
+            exit 0
+          fi
+
+          echo "::error::VERSION file ($VERSION_FILE) is BEHIND latest v* tag (v$LATEST_TAG)"
+          echo ""
+          echo "This means a tag exists for a version not reflected in VERSION."
+          echo "Resolution: align VERSION to v$LATEST_TAG (or higher if a bump is intended)."
+          echo "  echo '$LATEST_TAG' > VERSION && git commit -am 'chore: align VERSION with latest tag'"
+          exit 1
