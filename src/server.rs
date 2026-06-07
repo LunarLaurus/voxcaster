@@ -434,12 +434,15 @@ fn err_result(e: VoxError) -> CallToolResult {
 #[tool_handler]
 impl ServerHandler for VoxServer {
     fn get_info(&self) -> ServerInfo {
-        // Advertise tools + experimental so the `claude/channel` research-preview
-        // capability can be surfaced to the client.
-        let capabilities = ServerCapabilities::builder()
-            .enable_tools()
-            .enable_experimental()
-            .build();
+        // Advertise tools, and declare the `claude/channel` experimental capability
+        // by its literal key. Claude Code only registers this server as a channel
+        // (and delivers our notifications/claude/channel exit-pushes) when the key
+        // is present; an empty `experimental: {}` map is silently treated as no
+        // channel. The required value is an empty JSON object (`{}`).
+        let mut capabilities = ServerCapabilities::builder().enable_tools().build();
+        let mut experimental = std::collections::BTreeMap::new();
+        experimental.insert("claude/channel".to_string(), serde_json::Map::new());
+        capabilities.experimental = Some(experimental);
 
         // `ServerInfo` (alias for `InitializeResult`) is `#[non_exhaustive]`, so
         // construct via `ServerInfo::new(..)` and set fields with public setters.
@@ -565,5 +568,25 @@ mod tests {
         ]));
         assert!(s.contains("id: a"), "got: {s}");
         assert!(s.contains("id: b"), "got: {s}");
+    }
+
+    #[test]
+    fn advertises_claude_channel_capability() {
+        use rmcp::ServerHandler;
+        let policy = std::sync::Arc::new(crate::policy::PolicyEngine::from_lists(
+            vec![],
+            vec![],
+            true,
+        ));
+        let srv = VoxServer::new(crate::pty::manager::PtyManager::new(), policy);
+        let info = srv.get_info();
+        let experimental = info
+            .capabilities
+            .experimental
+            .expect("experimental capabilities must be advertised");
+        assert!(
+            experimental.contains_key("claude/channel"),
+            "server must declare the claude/channel capability or Claude Code drops channel pushes"
+        );
     }
 }
