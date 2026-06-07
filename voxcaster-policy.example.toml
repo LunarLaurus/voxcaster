@@ -1,4 +1,42 @@
-# Voxcaster command policy. Deny rules always win.
+# Voxcaster command policy — example / starting point.
+#
+# Point VOXCASTER_POLICY at a copy of this file to enforce a command policy:
+#   VOXCASTER_POLICY=C:\path\to\voxcaster-policy.toml
+#
+# Matching: each rule is a glob matched against the full "command arg1 arg2"
+# line (e.g. "cmd /C format C: /q"). Deny always wins over allow.
+#
+# NOTE: a built-in CATASTROPHIC floor is ALWAYS enforced regardless of this file
+# (even with no policy at all) — recursive root/home deletion, mkfs/dd to raw
+# disks, Windows format/diskpart/vssadmin delete, pipe-to-shell RCE, fork bombs,
+# shutdown/reboot. You do not need to list those here; add your own project- or
+# environment-specific rules below. The floor is a backstop for accidents and
+# egregious commands, NOT a security sandbox.
+
+# When true, any command not matched by a deny rule is allowed (CC's own
+# permission prompt remains the interactive gate). Set false to require every
+# command to match an `allow` rule (deny-by-default / allowlist mode) — strongly
+# recommended when launching with --dangerously-skip-permissions (e.g. `verity`).
 allow_by_default = true
-allow = ["npm *", "cargo *", "git *", "go *", "python *", "node *"]
-deny  = ["rm -rf /*", "* | sh", "curl * | *", "* > /dev/sd*"]
+
+# Commands permitted when allow_by_default = false. Ignored when it is true.
+allow = [
+  "npm *",
+  "cargo *",
+  "git *",
+  "go *",
+  "python *",
+  "node *",
+  "pnpm *",
+  "bun *",
+]
+
+# Extra denies layered on top of the built-in floor. Add anything you never want
+# the agent to run in your environment.
+deny = [
+  "git push --force*",
+  "git push -f*",
+  "* --no-verify*",
+  "npm publish*",
+  "cargo publish*",
+]

@@ -40,9 +40,17 @@ claude mcp add --transport stdio voxcaster -- C:\absolute\path\to\voxcaster.exe
 
 ### Command policy
 
-Set `VOXCASTER_POLICY=/path/to/voxcaster-policy.toml` (see
-[`voxcaster-policy.example.toml`](voxcaster-policy.example.toml)).
-Without it a permissive default applies and a warning is printed to stderr.
+A built-in **catastrophic floor** is always enforced — even with no policy file
+— blocking recursive root/home deletion, `mkfs`/`dd` to raw disks, Windows
+`format`/`diskpart`/`vssadmin delete`, pipe-to-shell RCE, fork bombs, and
+`shutdown`/`reboot`. It is an accident backstop, not a security sandbox.
+
+For project-specific rules, set `VOXCASTER_POLICY=/path/to/voxcaster-policy.toml`
+(see [`voxcaster-policy.example.toml`](voxcaster-policy.example.toml)). Without
+it, a permissive default applies (allow-by-default, floor still on) and a warning
+is printed to stderr. When running with `--dangerously-skip-permissions` (e.g.
+via `verity`), set `allow_by_default = false` and an `allow` list — Voxcaster's
+policy is then the only gate.
 
 ### Channel exit-push (optional, research preview)
 
