@@ -13,7 +13,10 @@ lifetime of the command and offers no interactive stdin or true TTY.
 ## Status
 
 **Working implementation — not yet released.**
-All 6 tools are implemented in Rust; 15+ tests pass locally on Windows and Linux.
+All 6 tools are implemented in Rust; 24 tests pass locally on Windows and Linux,
+including an end-to-end test of the channel exit-push. The Windows ConPTY
+self-bundling is verified on Windows 10 LTSC, and the `notifications/claude/channel`
+exit-push has been confirmed delivering into a live Claude Code session.
 The architecture is documented in
 [`docs/design/2026-06-07-voxcaster-design.md`](docs/design/2026-06-07-voxcaster-design.md).
 Not production-hardened; breaking changes may occur before a versioned release.
@@ -43,14 +46,27 @@ Without it a permissive default applies and a warning is printed to stderr.
 
 ### Channel exit-push (optional, research preview)
 
-Opt in per session with:
+When a session is spawned with `notify_on_exit: true`, Voxcaster pushes a
+`notifications/claude/channel` event into the running Claude Code session as the
+process exits, so the agent reacts hands-free without polling:
+
+```
+<channel source="voxcaster" session_id="pty_…" exit_code="0">
+Process `…` exited (code 0).
+</channel>
+```
+
+This requires Claude Code's channels research preview. Since custom channels are
+not on the allowlist, opt in per session with the development flag:
 
 ```sh
 claude --dangerously-load-development-channels server:voxcaster
 ```
 
-> **Note:** exit-push channel wiring is not yet implemented.
-> `pty_wait` is the guaranteed completion path for all sessions.
+Requires Claude Code ≥ v2.1.80 and claude.ai/Console authentication; not
+available on Bedrock/Vertex/Foundry. When the channel is not active, the push is
+silently skipped and **`pty_wait` remains the guaranteed completion path** for
+every session.
 
 ### Windows note — ConPTY redistributable
 
