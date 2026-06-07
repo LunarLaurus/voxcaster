@@ -6,7 +6,7 @@ use serde::Deserialize;
 
 use crate::types::VoxError;
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize)]
 pub struct PolicyFile {
     #[serde(default)]
     pub allow: Vec<String>,
@@ -18,6 +18,20 @@ pub struct PolicyFile {
 
 fn default_true() -> bool {
     true
+}
+
+// NB: a hand-written Default (not `#[derive(Default)]`). `bool::default()` is
+// `false`, which would make a missing/empty policy file deny-by-default and
+// silently contradict the documented allow-by-default posture (and the startup
+// warning). Keep this consistent with the serde `default_true` for the field.
+impl Default for PolicyFile {
+    fn default() -> Self {
+        Self {
+            allow: Vec::new(),
+            deny: Vec::new(),
+            allow_by_default: true,
+        }
+    }
 }
 
 pub struct PolicyEngine {
@@ -104,5 +118,15 @@ mod tests {
         let e = PolicyEngine::from_lists(vec!["git *".into()], vec![], false);
         assert!(e.check("curl", &["evil.sh".into()]).is_err());
         assert!(e.check("git", &["status".into()]).is_ok());
+    }
+
+    #[test]
+    fn default_and_missing_file_are_permissive() {
+        // PolicyFile::default() must match the serde default_true posture.
+        assert!(PolicyFile::default().allow_by_default);
+        // A missing policy file falls back to that permissive default, so an
+        // unlisted command is allowed (CC-native permissions remain the gate).
+        let e = PolicyEngine::from_file("voxcaster-nonexistent-policy-xyz.toml");
+        assert!(e.check("anything", &["--here".into()]).is_ok());
     }
 }
