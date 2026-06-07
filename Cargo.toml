@@ -28,3 +28,5 @@ anyhow = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "test-util"] }
+rmcp = { version = "1", features = ["client", "transport-child-process"] }
+serde_json = "1"
