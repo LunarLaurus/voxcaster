@@ -1,17 +1,11 @@
-mod channel;
-mod policy;
-mod pty;
-mod server;
-mod types;
-
 use std::path::Path;
 use std::sync::Arc;
 
 use rmcp::ServiceExt;
 
-use policy::PolicyEngine;
-use pty::manager::PtyManager;
-use server::VoxServer;
+use voxcaster::policy::PolicyEngine;
+use voxcaster::pty::manager::PtyManager;
+use voxcaster::server::VoxServer;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

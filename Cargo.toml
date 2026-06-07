@@ -9,6 +9,10 @@ license = "MIT"
 name = "voxcaster"
 path = "src/main.rs"
 
+[lib]
+name = "voxcaster"
+path = "src/lib.rs"
+
 [dependencies]
 rmcp = { version = "1", features = ["server", "transport-io", "macros"] }
 portable-pty = "0.9"
