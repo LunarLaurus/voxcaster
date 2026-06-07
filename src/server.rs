@@ -12,7 +12,10 @@ use std::sync::Arc;
 use globset::Glob;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, Content, ServerCapabilities, ServerInfo};
+use rmcp::model::{
+    CallToolResult, Content, CustomNotification, ServerCapabilities, ServerInfo, ServerNotification,
+};
+use rmcp::service::{Peer, RoleServer};
 use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -84,6 +87,30 @@ impl VoxServer {
     /// Kill a session, optionally removing it from the registry.
     pub fn kill_inner(&self, id: &str, cleanup: bool) -> Result<(), VoxError> {
         self.manager.kill(id, cleanup)
+    }
+
+    /// Spawn a detached task that, when session `id` exits, pushes a
+    /// `notifications/claude/channel` notification to `peer`.
+    ///
+    /// This is the research-preview "channels" enhancement: the blocking
+    /// `pty_wait` tool is the guaranteed floor. Send failures (no active
+    /// channel, disconnected client) are swallowed — they must never crash
+    /// the session. Errors are logged to stderr only; stdout is reserved for
+    /// the MCP transport.
+    fn spawn_exit_push(&self, peer: Peer<RoleServer>, id: String) {
+        let manager = self.manager.clone();
+        tokio::spawn(async move {
+            if let Ok(info) = manager.wait(&id, None).await {
+                let params = crate::channel::exit_params_for(&info);
+                let notification = ServerNotification::CustomNotification(CustomNotification::new(
+                    crate::channel::CHANNEL_METHOD,
+                    Some(params),
+                ));
+                if let Err(e) = peer.send_notification(notification).await {
+                    eprintln!("voxcaster: channel exit-push for session {id} failed: {e}");
+                }
+            }
+        });
     }
 }
 
@@ -223,19 +250,27 @@ impl VoxServer {
         name = "pty_spawn",
         description = "Spawn a new interactive PTY session running a command."
     )]
-    async fn pty_spawn(&self, Parameters(p): Parameters<SpawnParams>) -> CallToolResult {
+    async fn pty_spawn(
+        &self,
+        Parameters(p): Parameters<SpawnParams>,
+        peer: Peer<RoleServer>,
+    ) -> CallToolResult {
         let json_out = is_json(&p.format);
+        let notify_on_exit = p.notify_on_exit;
         let opts = SpawnOptions {
             command: p.command,
             args: p.args,
             workdir: p.workdir,
             env: p.env.into_iter().collect(),
             title: p.title,
-            notify_on_exit: p.notify_on_exit,
+            notify_on_exit,
             timeout_seconds: p.timeout_seconds,
         };
         match self.spawn_inner(opts) {
             Ok(id) => {
+                if notify_on_exit {
+                    self.spawn_exit_push(peer, id.clone());
+                }
                 let v = json!({ "sessionId": id });
                 if json_out {
                     success_json(v)
@@ -485,6 +520,41 @@ mod tests {
     fn human_renders_string_without_quotes() {
         let s = human(&serde_json::json!("hello"));
         assert_eq!(s, "hello");
+    }
+
+    #[test]
+    fn exit_push_notification_payload_is_well_formed() {
+        // Mirror the construction inside `spawn_exit_push` without a transport:
+        // a finished SessionInfo -> CustomNotification on CHANNEL_METHOD.
+        let info = crate::types::SessionInfo {
+            id: "pty_abcd".to_string(),
+            title: "t".to_string(),
+            command: "npm".to_string(),
+            args: vec!["run".to_string(), "dev".to_string()],
+            workdir: ".".to_string(),
+            status: crate::types::Status::Exited,
+            pid: Some(123),
+            exit_code: Some(0),
+            line_count: 4,
+            timed_out: false,
+        };
+        let params = crate::channel::exit_params_for(&info);
+        let notification = CustomNotification::new(crate::channel::CHANNEL_METHOD, Some(params));
+
+        assert_eq!(notification.method, "notifications/claude/channel");
+        let p = notification.params.as_ref().expect("params present");
+        assert_eq!(p["meta"]["session_id"], "pty_abcd");
+        assert_eq!(p["meta"]["exit_code"], "0");
+        assert!(p["content"].as_str().unwrap().contains("npm run dev"));
+
+        // It wraps into the ServerNotification enum without loss.
+        let server_notification = ServerNotification::CustomNotification(notification);
+        match server_notification {
+            ServerNotification::CustomNotification(n) => {
+                assert_eq!(n.method, crate::channel::CHANNEL_METHOD);
+            }
+            _ => panic!("expected CustomNotification variant"),
+        }
     }
 
     #[test]
