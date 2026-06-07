@@ -13,3 +13,7 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# Windows ConPTY redistributable (handled by the bundling task, not committed loose)
+conpty.dll
+OpenConsole.exe
