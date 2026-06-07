@@ -9,6 +9,10 @@ use voxcaster::server::VoxServer;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Stage the bundled ConPTY redistributable before any PTY spawn so that
+    // portable-pty's LoadLibrary("conpty.dll") finds the modern version.
+    voxcaster::conpty_bootstrap::ensure_conpty();
+
     // Resolve the policy file path; warn on stderr if it is absent so an operator
     // is never silently running with a wide-open (allow-all) policy.
     let policy_path =

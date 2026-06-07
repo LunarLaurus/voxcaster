@@ -14,6 +14,7 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Windows ConPTY redistributable (handled by the bundling task, not committed loose)
-conpty.dll
-OpenConsole.exe
+# Windows ConPTY redistributable — ignore loose copies at repo root only;
+# assets/win-x64/* is committed and must not be blocked by these rules.
+/conpty.dll
+/OpenConsole.exe

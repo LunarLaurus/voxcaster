@@ -54,19 +54,15 @@ claude --dangerously-load-development-channels server:voxcaster
 
 ### Windows note — ConPTY redistributable
 
-On Windows 10 LTSC/IoT (and other images where the inbox ConPTY is broken),
-place a modern `conpty.dll` and `OpenConsole.exe` **next to `voxcaster.exe`**.
-Obtain them from the
+Voxcaster bundles a modern ConPTY redistributable and self-stages it to
+`%LOCALAPPDATA%\voxcaster\conpty` on first run — no manual file placement
+required.  This ensures `portable-pty` uses a known-good ConPTY host even
+on Windows 10 LTSC/IoT images where the inbox ConPTY is broken (e.g. every
+child exits `0xC0000142`).
+
+The bundled redist is the
 [`Microsoft.Windows.Console.ConPTY`](https://www.nuget.org/packages/Microsoft.Windows.Console.ConPTY)
-NuGet redistributable — download the `.nupkg`, unzip it, and copy:
-
-```
-runtimes/win-x64/native/conpty.dll
-build/native/runtimes/x64/OpenConsole.exe
-```
-
-`portable-pty` auto-prefers a co-located `conpty.dll` over the inbox one.
-Automatic bundling is planned for a future release.
+NuGet package — see `assets/win-x64/LICENSE-ConPTY.txt` for its MIT license.
 
 ## At a glance
 
