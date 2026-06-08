@@ -1,3 +1,0 @@
-[submodule ".lex-flows"]
-	path = .lex-flows
-	url = http://192.168.0.12:30008/StellarFleetOps/lex-flows.git
