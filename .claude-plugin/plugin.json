@@ -1,0 +1,22 @@
+{
+  "name": "voxcaster",
+  "version": "0.1.0",
+  "description": "Persistent interactive PTY sessions for AI agents — spawn background processes, send stdin, read output, and get hands-free exit notifications via Claude Code channels.",
+  "author": {
+    "name": "LunarLaurus",
+    "url": "https://github.com/LunarLaurus"
+  },
+  "homepage": "https://github.com/LunarLaurus/voxcaster",
+  "repository": "https://github.com/LunarLaurus/voxcaster",
+  "license": "MIT",
+  "keywords": [
+    "pty",
+    "terminal",
+    "shell",
+    "background-process",
+    "mcp",
+    "interactive",
+    "channels"
+  ],
+  "mcpServers": "./.mcp.json"
+}
