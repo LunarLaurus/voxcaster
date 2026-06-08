@@ -1,0 +1,41 @@
+name: Rust Test
+
+on:
+  push:
+    branches: ["master", "main"]
+    paths:
+      - "**.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: ["master", "main"]
+    paths:
+      - "**.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+
+jobs:
+  rust-test:
+    name: Rust Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Check
+        run: cargo check --all-targets
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --all-targets
+
+      - name: Format check
+        run: cargo fmt --all -- --check

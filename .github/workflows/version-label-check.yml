@@ -8,8 +8,8 @@ on:
 jobs:
   label-check:
     name: Version Label
-    runs-on: fleet-ci
-    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Check for version label (patch/minor/major)
         run: |
@@ -18,9 +18,10 @@ jobs:
             echo "Version label found"
           else
             echo "ERROR: PR must have a version label (patch, minor, or major)"
-            echo "Add one via: lex-gitea issue label <owner/name> <pr-number> --add patch"
+            echo "Add one via: gh pr edit ${{ github.event.pull_request.number }} --add-label patch"
             exit 1
           fi
+
       - name: Check for type label (type/feature, type/bug, etc.)
         run: |
           LABELS='${{ toJSON(github.event.pull_request.labels.*.name) }}'
@@ -28,6 +29,6 @@ jobs:
             echo "Type label found"
           else
             echo "ERROR: PR must have a type label (type/feature, type/bug, type/enhancement, etc.)"
-            echo "Add one via: lex-gitea issue label <owner/name> <pr-number> --add type/feature"
+            echo "Add one via: gh pr edit ${{ github.event.pull_request.number }} --add-label type/feature"
             exit 1
           fi

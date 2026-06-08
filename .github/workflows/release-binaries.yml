@@ -1,0 +1,81 @@
+name: release-binaries
+
+# Cross-platform binary build for Voxcaster.
+#
+# Targets: static musl Linux (x86_64, aarch64) + Windows (x86_64, via mingw).
+# Uses cargo-zigbuild with zig as the cross C compiler/linker — no Docker required.
+# The Windows .exe is cross-compiled (x86_64-pc-windows-gnu); ConPTY behaviour is
+# only validated by a native Windows build.
+#
+# Trigger: a `v*` tag (created by version-bump on PR merge) → build all targets
+# and attach them to that tag's release. Also runnable via workflow_dispatch.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cross-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl,x86_64-pc-windows-gnu
+
+      - name: Install cargo-zigbuild and zig
+        run: |
+          python3 -m pip install --user --quiet ziglang
+          cargo install --locked cargo-zigbuild
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Cross-build all targets
+        run: |
+          set -u
+          mkdir -p dist
+          # triple : output-name
+          TARGETS="
+            x86_64-unknown-linux-musl:voxcaster-linux-x86_64
+            aarch64-unknown-linux-musl:voxcaster-linux-aarch64
+            x86_64-pc-windows-gnu:voxcaster-windows-x86_64.exe
+          "
+          build_one() {
+            triple="${1%%:*}"; out="${1##*:}"
+            echo "::group::build ${triple}"
+            if cargo zigbuild --release --target "$triple"; then
+              if [ -f "target/${triple}/release/voxcaster.exe" ]; then
+                cp "target/${triple}/release/voxcaster.exe" "dist/${out}"
+              else
+                cp "target/${triple}/release/voxcaster" "dist/${out}"
+              fi
+              echo "built ${out}"
+            else
+              echo "SKIP ${triple} (build failed)"
+            fi
+            echo "::endgroup::"
+          }
+          for t in $TARGETS; do build_one "$t"; done
+          chmod +x dist/* 2>/dev/null || true
+          echo "=== dist ==="; ls -la dist
+          if [ -z "$(ls -A dist 2>/dev/null)" ]; then
+            echo "no binaries built" >&2; exit 1
+          fi
+
+      - name: Upload binaries to release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          # Release may already exist (created by version-bump); upload --clobber
+          # for idempotency so re-runs replace stale assets cleanly.
+          gh release upload "${TAG}" dist/* --clobber
+          echo "attached $(ls dist | wc -l) binaries to ${TAG}"

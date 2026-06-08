@@ -1,0 +1,136 @@
+name: Version Bump (on merge only)
+
+on:
+  pull_request:
+    types: [closed]
+    branches: ["master", "main"]
+
+permissions:
+  contents: write
+
+jobs:
+  version-bump:
+    name: Version Bump (on merge only)
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine bump type from PR labels
+        id: bump
+        run: |
+          LABELS='${{ toJSON(github.event.pull_request.labels.*.name) }}'
+          if echo "$LABELS" | grep -q '"major"'; then
+            echo "type=major" >> "$GITHUB_OUTPUT"
+          elif echo "$LABELS" | grep -q '"minor"'; then
+            echo "type=minor" >> "$GITHUB_OUTPUT"
+          else
+            echo "type=patch" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump version and tag
+        id: version
+        run: |
+          set -euo pipefail
+          TYPE="${{ steps.bump.outputs.type }}"
+          if [ ! -f VERSION ]; then echo "0.1.0" > VERSION; fi
+          CURRENT=$(cat VERSION | tr -d '[:space:]')
+          LATEST_TAG=$(git tag -l 'v*' | sed 's/^v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1 || true)
+          if [ -n "$LATEST_TAG" ]; then
+            HIGHER=$(printf '%s\n%s\n' "$CURRENT" "$LATEST_TAG" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+            CURRENT="$HIGHER"
+          fi
+          MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+          MINOR=$(echo "$CURRENT" | cut -d. -f2)
+          PATCH=$(echo "$CURRENT" | cut -d. -f3)
+          case "$TYPE" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+          NEW="${MAJOR}.${MINOR}.${PATCH}"
+          if git tag -l "v${NEW}" | grep -q .; then
+            echo "Tag v${NEW} already exists -- skipping"
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$NEW" > VERSION
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add VERSION
+          git commit -m "chore: bump version to ${NEW} [skip ci]"
+          git tag "v${NEW}"
+          BASE="${{ github.event.pull_request.base.ref }}"
+          git push origin "HEAD:${BASE}"
+          git push origin "v${NEW}"
+          echo "new_version=${NEW}" >> "$GITHUB_OUTPUT"
+          echo "new_tag=v${NEW}" >> "$GITHUB_OUTPUT"
+          echo "skipped=false" >> "$GITHUB_OUTPUT"
+
+      - name: Generate changelog
+        if: steps.version.outputs.skipped != 'true'
+        id: notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.version.outputs.new_tag }}"
+          BUMP_TYPE="${{ steps.bump.outputs.type }}"
+
+          PREV_TAG=$(git tag -l 'v*' | sed 's/^v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -t. -k1,1n -k2,2n -k3,3n | tail -2 | head -1 || true)
+
+          echo "## ${TAG}" > /tmp/release-notes.md
+          echo "" >> /tmp/release-notes.md
+
+          FEAT_FILE=$(mktemp) FIX_FILE=$(mktemp) OTHER_FILE=$(mktemp)
+
+          if [ -n "$PREV_TAG" ]; then
+            PR_NUMS=$(git log "v${PREV_TAG}..HEAD" --oneline | grep -oP "Merge pull request.*#\K[0-9]+" | sort -un || true)
+          else
+            PR_NUMS="${{ github.event.pull_request.number }}"
+          fi
+
+          for num in $PR_NUMS; do
+            PR_DATA=$(gh api "repos/${{ github.repository }}/pulls/${num}" 2>/dev/null || true)
+            TITLE=$(echo "$PR_DATA" | python3 -c "import sys,json; print(json.load(sys.stdin).get('title',''))" 2>/dev/null || true)
+            LABELS=$(echo "$PR_DATA" | python3 -c "import sys,json; print(' '.join(l['name'] for l in json.load(sys.stdin).get('labels',[])))" 2>/dev/null || true)
+            if [ -z "$TITLE" ]; then continue; fi
+            ENTRY="- ${TITLE} (#${num})"
+            case "$LABELS" in
+              *type/feature*|*type/enhancement*) echo "$ENTRY" >> "$FEAT_FILE" ;;
+              *type/bug*|*type/security*) echo "$ENTRY" >> "$FIX_FILE" ;;
+              *) echo "$ENTRY" >> "$OTHER_FILE" ;;
+            esac
+          done
+
+          if [ -s "$FEAT_FILE" ]; then echo "### Features" >> /tmp/release-notes.md; cat "$FEAT_FILE" >> /tmp/release-notes.md; echo "" >> /tmp/release-notes.md; fi
+          if [ -s "$FIX_FILE" ]; then echo "### Fixes" >> /tmp/release-notes.md; cat "$FIX_FILE" >> /tmp/release-notes.md; echo "" >> /tmp/release-notes.md; fi
+          if [ -s "$OTHER_FILE" ]; then echo "### Other" >> /tmp/release-notes.md; cat "$OTHER_FILE" >> /tmp/release-notes.md; echo "" >> /tmp/release-notes.md; fi
+
+          HAVE_ENTRIES=false
+          if [ -s "$FEAT_FILE" ] || [ -s "$FIX_FILE" ] || [ -s "$OTHER_FILE" ]; then HAVE_ENTRIES=true; fi
+          rm -f "$FEAT_FILE" "$FIX_FILE" "$OTHER_FILE"
+
+          if [ "$HAVE_ENTRIES" = "false" ]; then
+            printf -- '- %s (#%s)\n' "${{ github.event.pull_request.title }}" "${{ github.event.pull_request.number }}" >> /tmp/release-notes.md
+          fi
+
+          if [ -n "$PREV_TAG" ]; then
+            echo "" >> /tmp/release-notes.md
+            echo "[Full changelog](https://github.com/${{ github.repository }}/compare/v${PREV_TAG}...${TAG})" >> /tmp/release-notes.md
+          fi
+
+      - name: Create GitHub release
+        if: steps.version.outputs.skipped != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.version.outputs.new_tag }}"
+          gh release create "${TAG}" \
+            --title "voxcaster ${TAG}" \
+            --notes-file /tmp/release-notes.md \
+            --draft=false \
+            --prerelease=false

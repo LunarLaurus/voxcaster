@@ -140,6 +140,21 @@ code copied — that drops the opencode/Bun coupling and web-server attack surfa
 and adds cross-platform Rust, layered exit signalling, and defense-in-depth
 permissions.
 
+## Development
+
+This GitHub repo is a downstream fork of an upstream private repository.
+The only content unique to this fork is `.github/workflows/`.
+
+To pull upstream changes into the fork:
+
+```sh
+git fetch origin          # fetch from upstream
+git rebase origin/main    # replay the .github/ overlay on top
+git push github main --force-with-lease
+```
+
+The overlay commit adds only new files and rebases cleanly onto any upstream state.
+
 ## License
 
 MIT
